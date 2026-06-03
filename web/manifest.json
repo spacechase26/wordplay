@@ -1,11 +1,11 @@
 {
-    "name": "wordplay",
-    "short_name": "wordplay",
+    "name": "Wordplay by Spacechase",
+    "short_name": "Wordplay",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "An unlimited Wordle-style word game by Spacechase.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

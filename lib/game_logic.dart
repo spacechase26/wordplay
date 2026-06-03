@@ -42,12 +42,11 @@ class WordleGame {
   }
 
   /// Returns null on success, or a human-readable error message.
+  /// Any [wordLength]-letter input is accepted as a guess — it does not
+  /// have to be a real dictionary word.
   String? submit() {
     if (isOver) return null;
     if (current.length < wordLength) return 'Not enough letters';
-    if (!kValidGuesses.contains(current) && current != answer) {
-      return 'Not in word list';
-    }
     guesses.add(current);
     current = '';
     return null;

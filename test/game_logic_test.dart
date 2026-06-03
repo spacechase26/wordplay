@@ -62,9 +62,16 @@ void main() {
     expect(g.isOver, isTrue);
   });
 
-  test('rejects invalid word', () {
+  test('accepts any 5-letter guess, real word or not', () {
     final g = WordleGame(answer: 'crane');
     g.current = 'zzzzz';
-    expect(g.submit(), 'Not in word list');
+    expect(g.submit(), isNull);
+    expect(g.guesses, contains('zzzzz'));
+  });
+
+  test('still rejects an incomplete guess', () {
+    final g = WordleGame(answer: 'crane');
+    g.current = 'cra';
+    expect(g.submit(), 'Not enough letters');
   });
 }

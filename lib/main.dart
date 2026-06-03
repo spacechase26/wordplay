@@ -28,7 +28,7 @@ class WordplayApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Wordplay',
+      title: 'Wordplay by Spacechase',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -300,6 +300,14 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
             Text('Unlimited mode: play as many words as you like. Hard mode '
                 'forces you to reuse every hint you uncover.',
                 style: TextStyle(color: Colors.white70)),
+            SizedBox(height: 16),
+            Center(
+              child: Text('Wordplay by Spacechase',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white38,
+                      letterSpacing: 0.5)),
+            ),
           ],
         ),
         actions: [
@@ -327,8 +335,20 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       appBar: AppBar(
         backgroundColor: _bg,
         centerTitle: true,
-        title: const Text('WORDPLAY',
-            style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 4)),
+        title: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('WORDPLAY',
+                style: TextStyle(
+                    fontWeight: FontWeight.w800, letterSpacing: 4, height: 1.0)),
+            Text('by Spacechase',
+                style: TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 1.5,
+                    color: Colors.white54,
+                    fontWeight: FontWeight.w500)),
+          ],
+        ),
         shape: const Border(
             bottom: BorderSide(color: Color(0xFF2A2A2B), width: 1)),
         actions: [
