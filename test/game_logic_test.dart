@@ -52,6 +52,15 @@ void main() {
       final v = g.hardModeViolation('crank'); // keeps all three greens
       expect(v, isNull);
     });
+
+    test('enforces duplicate-letter counts (a known letter twice)', () {
+      // answer "sissy": guess "shops" reveals s as green@0 AND yellow@4,
+      // so a later guess must contain at least two s's.
+      final g = WordleGame(answer: 'sissy');
+      g.guesses.add('shops');
+      expect(g.hardModeViolation('satyr'), isNotNull); // only one s
+      expect(g.hardModeViolation('sassy'), isNull); // three s's, ok
+    });
   });
 
   test('win detection', () {

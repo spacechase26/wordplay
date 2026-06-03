@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 class Stats {
@@ -185,33 +187,33 @@ class GameSnapshot {
 }
 
 // Saves the board so a refresh / app restart resumes where you left off.
+// Each board is one JSON blob written in a single setString, so concurrent
+// saves can't interleave into a mismatched answer/guesses pair.
 class GameStore {
-  static Future<void> saveUnlimited(String answer, List<String> guesses) async {
+  static Future<void> saveUnlimited(String answer, List<String> guesses) =>
+      _save('u_game', {'answer': answer, 'guesses': guesses});
+
+  static Future<GameSnapshot?> loadUnlimited() => _load('u_game', -1);
+
+  static Future<void> saveDaily(int day, String answer, List<String> guesses) =>
+      _save('d_game', {'day': day, 'answer': answer, 'guesses': guesses});
+
+  static Future<GameSnapshot?> loadDaily() => _load('d_game', null);
+
+  static Future<void> _save(String key, Map<String, dynamic> data) async {
     final p = await SharedPreferences.getInstance();
-    await p.setString('u_answer', answer);
-    await p.setStringList('u_guesses', guesses);
+    await p.setString(key, jsonEncode(data));
   }
 
-  static Future<GameSnapshot?> loadUnlimited() async {
+  static Future<GameSnapshot?> _load(String key, int? defaultDay) async {
     final p = await SharedPreferences.getInstance();
-    final answer = p.getString('u_answer');
-    if (answer == null) return null;
-    return GameSnapshot(answer, p.getStringList('u_guesses') ?? [], -1);
-  }
-
-  static Future<void> saveDaily(
-      int day, String answer, List<String> guesses) async {
-    final p = await SharedPreferences.getInstance();
-    await p.setInt('g_day', day);
-    await p.setString('g_answer', answer);
-    await p.setStringList('g_guesses', guesses);
-  }
-
-  static Future<GameSnapshot?> loadDaily() async {
-    final p = await SharedPreferences.getInstance();
-    final answer = p.getString('g_answer');
-    if (answer == null) return null;
+    final raw = p.getString(key);
+    if (raw == null) return null;
+    final m = jsonDecode(raw) as Map<String, dynamic>;
     return GameSnapshot(
-        answer, p.getStringList('g_guesses') ?? [], p.getInt('g_day') ?? -1);
+      m['answer'] as String,
+      (m['guesses'] as List).cast<String>(),
+      (m['day'] as int?) ?? defaultDay ?? -1,
+    );
   }
 }

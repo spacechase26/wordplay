@@ -6,8 +6,7 @@ import 'package:flutter/services.dart' show rootBundle;
 // answers = solution pool (common, real words); valid = anything you're
 // allowed to guess (a big dictionary, includes the answers).
 class Dictionary {
-  Dictionary(this.length, this.answers, this.valid)
-      : _dailyOrder = _shuffleStable(answers);
+  Dictionary(this.length, this.answers, this.valid);
 
   final int length;
   final List<String> answers;
@@ -15,7 +14,8 @@ class Dictionary {
 
   // A fixed pseudo-random permutation of [answers] used for the daily puzzle,
   // so consecutive days aren't alphabetically adjacent. Same on every device.
-  final List<String> _dailyOrder;
+  // Lazy: unlimited-only sessions never build it.
+  late final List<String> _dailyOrder = _shuffleStable(answers);
 
   static const supportedLengths = [4, 5, 6];
   static final Map<int, Dictionary> _cache = {};
@@ -24,8 +24,10 @@ class Dictionary {
     final cached = _cache[len];
     if (cached != null) return cached;
     final answers = await _load('assets/words/answers_$len.txt');
-    final valid = await _load('assets/words/valid_$len.txt');
-    final dict = Dictionary(len, answers, {...valid, ...answers});
+    final validSet = (await _load('assets/words/valid_$len.txt')).toSet();
+    // Every answer is already in the valid set, so no merge is needed.
+    assert(answers.every(validSet.contains));
+    final dict = Dictionary(len, answers, validSet);
     _cache[len] = dict;
     return dict;
   }
