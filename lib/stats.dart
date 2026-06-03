@@ -106,6 +106,26 @@ class Settings {
     final p = await SharedPreferences.getInstance();
     await p.setString(_kMode, value);
   }
+
+  static Future<String> themeMode() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString('theme') ?? 'dark';
+  }
+
+  static Future<void> setThemeMode(String value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('theme', value);
+  }
+
+  static Future<bool> seenIntro() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool('seenIntro') ?? false;
+  }
+
+  static Future<void> setSeenIntro() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('seenIntro', true);
+  }
 }
 
 // Daily-mode results are tracked separately so casual unlimited play
