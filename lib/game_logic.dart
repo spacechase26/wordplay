@@ -1,16 +1,19 @@
-import 'dart:math';
-
-import 'words.dart';
-
 enum LetterStatus { empty, tbd, correct, present, absent }
 
 class WordleGame {
-  WordleGame({required this.answer, this.maxGuesses = 6})
-      : wordLength = answer.length;
+  WordleGame({
+    required this.answer,
+    Set<String>? validGuesses,
+    this.maxGuesses = 6,
+  })  : wordLength = answer.length,
+        validGuesses = validGuesses ?? const {};
 
   final String answer;
   final int maxGuesses;
   final int wordLength;
+
+  // Words accepted as a guess. Empty set = accept anything (used in tests).
+  final Set<String> validGuesses;
 
   final List<String> guesses = <String>[];
   String current = '';
@@ -18,11 +21,6 @@ class WordleGame {
   bool get isWon => guesses.isNotEmpty && guesses.last == answer;
   bool get isLost => !isWon && guesses.length >= maxGuesses;
   bool get isOver => isWon || isLost;
-
-  factory WordleGame.random([Random? rng]) {
-    final r = rng ?? Random();
-    return WordleGame(answer: kAnswers[r.nextInt(kAnswers.length)]);
-  }
 
   void addLetter(String letter) {
     if (isOver) return;
@@ -35,10 +33,12 @@ class WordleGame {
     current = current.substring(0, current.length - 1);
   }
 
-  // Any full-length guess is accepted; it doesn't have to be a real word.
   String? submit() {
     if (isOver) return null;
     if (current.length < wordLength) return 'Not enough letters';
+    if (validGuesses.isNotEmpty && !validGuesses.contains(current)) {
+      return 'Not in word list';
+    }
     guesses.add(current);
     current = '';
     return null;
