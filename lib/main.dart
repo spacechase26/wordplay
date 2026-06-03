@@ -1,13 +1,17 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'game_logic.dart';
 import 'stats.dart';
+import 'words.dart';
 
 void main() => runApp(const WordplayApp());
 
 // colours
 const _bg = Color(0xFF121213);
+const _panel = Color(0xFF1E1E1F);
 const _green = Color(0xFF6AAA64);
 const _yellow = Color(0xFFC9B458);
 const _gray = Color(0xFF3A3A3C);
@@ -21,6 +25,8 @@ Color _colorFor(LetterStatus s) => switch (s) {
       LetterStatus.absent => _gray,
       _ => _keyDefault,
     };
+
+enum GameMode { unlimited, daily }
 
 class WordplayApp extends StatelessWidget {
   const WordplayApp({super.key});
@@ -50,35 +56,93 @@ class GamePage extends StatefulWidget {
 }
 
 class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
-  late WordleGame _game;
-  Stats _stats = Stats();
-  bool _hardMode = false;
-  bool _busy = false; // locks input during reveal animation
+  final _rng = math.Random();
 
-  int _justSubmittedRow = -1; // row to play the flip on
+  Dictionary? _dict;
+  WordleGame? _game;
+  int _length = 5;
+  GameMode _mode = GameMode.unlimited;
+
+  Stats _stats = Stats();
+  DailyStats _daily = DailyStats();
+  bool _hardMode = false;
+  bool _busy = false; // locks input during the reveal animation
+  bool _loading = true;
+
+  int _justSubmittedRow = -1; // row to flip
+  int _winRow = -1; // row to bounce
   late final AnimationController _shake;
-  final FocusNode _kbFocus = FocusNode(); // keeps physical keyboard active
+  final FocusNode _kbFocus = FocusNode();
 
   static const _flipMs = 300;
   static const _staggerMs = 220;
 
+  int get _today {
+    final n = DateTime.now();
+    return DateTime(n.year, n.month, n.day)
+        .difference(DateTime(2022, 1, 1))
+        .inDays;
+  }
+
   @override
   void initState() {
     super.initState();
-    _game = WordleGame.random();
     _shake = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 500));
-    _loadPersisted();
+    _boot();
   }
 
-  Future<void> _loadPersisted() async {
-    final s = await Stats.load();
-    final hm = await Settings.hardMode();
-    if (mounted) {
-      setState(() {
-        _stats = s;
-        _hardMode = hm;
-      });
+  Future<void> _boot() async {
+    _stats = await Stats.load();
+    _daily = await DailyStats.load();
+    _hardMode = await Settings.hardMode();
+    _length = await Settings.length();
+    _mode =
+        await Settings.mode() == 'daily' ? GameMode.daily : GameMode.unlimited;
+    await _startFromStorage();
+    if (mounted) setState(() => _loading = false);
+  }
+
+  WordleGame _build(String answer, [List<String> guesses = const []]) {
+    final g = WordleGame(answer: answer, validGuesses: _dict!.valid);
+    g.guesses.addAll(guesses);
+    return g;
+  }
+
+  Future<void> _startFromStorage() async {
+    if (_mode == GameMode.daily) {
+      _dict = await Dictionary.forLength(5);
+      final snap = await GameStore.loadDaily();
+      if (snap != null && snap.day == _today) {
+        _game = _build(snap.answer, snap.guesses);
+      } else {
+        final answer = _dict!.answerForIndex(_today);
+        _game = _build(answer);
+        await GameStore.saveDaily(_today, answer, const []);
+      }
+    } else {
+      _dict = await Dictionary.forLength(_length);
+      final snap = await GameStore.loadUnlimited();
+      if (snap != null && snap.answer.length == _length) {
+        _game = _build(snap.answer, snap.guesses);
+      } else {
+        final answer = _dict!.randomAnswer(_rng);
+        _game = _build(answer);
+        await GameStore.saveUnlimited(answer, const []);
+      }
+    }
+    _justSubmittedRow = -1;
+    _winRow = -1;
+    _busy = false;
+  }
+
+  void _persist() {
+    final g = _game;
+    if (g == null) return;
+    if (_mode == GameMode.daily) {
+      GameStore.saveDaily(_today, g.answer, g.guesses);
+    } else {
+      GameStore.saveUnlimited(g.answer, g.guesses);
     }
   }
 
@@ -106,7 +170,8 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       return KeyEventResult.handled;
     }
     final label = event.character?.toLowerCase() ?? '';
-    if (label.length == 1 && label.codeUnitAt(0) >= 0x61 &&
+    if (label.length == 1 &&
+        label.codeUnitAt(0) >= 0x61 &&
         label.codeUnitAt(0) <= 0x7a) {
       _onKey(label);
       return KeyEventResult.handled;
@@ -115,88 +180,147 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 
   void _onKey(String key) {
-    // taps steal focus from the grid, grab it back
     if (!_kbFocus.hasFocus) _kbFocus.requestFocus();
-    if (_busy || _game.isOver) return;
+    final game = _game;
+    if (game == null || _busy || game.isOver) return;
     if (key == 'ENTER') {
       _submit();
     } else if (key == 'DEL') {
-      setState(() => _game.removeLetter());
+      setState(() => game.removeLetter());
     } else {
-      setState(() => _game.addLetter(key));
+      setState(() => game.addLetter(key));
     }
   }
 
-  void _reject(String message) {
-    _shake.forward(from: 0);
+  void _toast(String message, {bool good = false}) {
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
       ..showSnackBar(SnackBar(
         content: Text(message,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.black)),
+            style: TextStyle(
+                color: Colors.black,
+                fontWeight: good ? FontWeight.bold : FontWeight.normal)),
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(milliseconds: 1100),
+        duration: Duration(milliseconds: good ? 1500 : 1100),
         backgroundColor: Colors.white,
-        width: 240,
+        width: 220,
       ));
   }
 
+  void _reject(String message) {
+    _shake.forward(from: 0);
+    _toast(message);
+  }
+
   Future<void> _submit() async {
-    if (_game.current.length < _game.wordLength) {
+    final game = _game!;
+    if (game.current.length < game.wordLength) {
       _reject('Not enough letters');
       return;
     }
     if (_hardMode) {
-      final v = _game.hardModeViolation(_game.current);
+      final v = game.hardModeViolation(game.current);
       if (v != null) {
         _reject(v);
         return;
       }
     }
-    final rowIndex = _game.guesses.length;
-    final err = _game.submit();
+    final rowIndex = game.guesses.length;
+    final err = game.submit();
     if (err != null) {
       _reject(err);
       return;
     }
+    _persist();
 
     setState(() {
       _justSubmittedRow = rowIndex;
       _busy = true;
     });
 
-    // Wait for the staggered flip to finish before resolving the round.
-    final total = _staggerMs * (_game.wordLength - 1) + _flipMs + 80;
+    final total = _staggerMs * (game.wordLength - 1) + _flipMs + 80;
     await Future<void>.delayed(Duration(milliseconds: total));
     if (!mounted) return;
-
     setState(() => _busy = false);
 
-    if (_game.isOver) {
-      final didWin = _game.isWon;
-      await _stats.record(
-          didWin: didWin, guessCount: didWin ? _game.guesses.length : 0);
-      if (mounted) setState(() {});
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (game.isOver) {
+      final didWin = game.isWon;
+      if (_mode == GameMode.daily) {
+        await _daily.record(day: _today, didWin: didWin);
+      } else {
+        await _stats.record(
+            didWin: didWin, guessCount: didWin ? game.guesses.length : 0);
+      }
+      if (!mounted) return;
+      if (didWin) {
+        setState(() => _winRow = rowIndex);
+        _toast(_praise(game.guesses.length), good: true);
+      } else {
+        setState(() {});
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 900));
       if (mounted) _showEndDialog(didWin);
     }
   }
 
-  void _newGame() {
+  String _praise(int guesses) => const {
+        1: 'Genius',
+        2: 'Magnificent',
+        3: 'Impressive',
+        4: 'Splendid',
+        5: 'Great',
+        6: 'Phew!',
+      }[guesses] ??
+      'Solved';
+
+  Future<void> _newUnlimited() async {
+    _dict = await Dictionary.forLength(_length);
+    final answer = _dict!.randomAnswer(_rng);
     setState(() {
-      _game = WordleGame.random();
+      _game = _build(answer);
       _justSubmittedRow = -1;
+      _winRow = -1;
       _busy = false;
     });
+    await GameStore.saveUnlimited(answer, const []);
     _kbFocus.requestFocus();
   }
 
+  Future<void> _setMode(GameMode m) async {
+    if (m == _mode) return;
+    await Settings.setMode(m == GameMode.daily ? 'daily' : 'unlimited');
+    setState(() {
+      _mode = m;
+      _loading = true;
+    });
+    await _startFromStorage();
+    if (mounted) setState(() => _loading = false);
+    _kbFocus.requestFocus();
+  }
+
+  Future<void> _setLength(int n) async {
+    if (n == _length) return;
+    await Settings.setLength(n);
+    setState(() => _length = n);
+    await _newUnlimited();
+  }
+
+  String _shareText(bool didWin) {
+    final g = _game!;
+    final tries = didWin ? '${g.guesses.length}' : 'X';
+    final tag = _mode == GameMode.daily ? 'Wordplay Daily #$_today' : 'Wordplay';
+    final len = g.wordLength != 5 ? ' (${g.wordLength})' : '';
+    final hard = _hardMode ? '*' : '';
+    return '$tag $tries/6$len$hard\n\n${g.shareGrid()}';
+  }
+
   void _showEndDialog(bool didWin) {
+    final daily = _mode == GameMode.daily;
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1F),
+        backgroundColor: _panel,
         title: Text(didWin ? 'Got it! 🎉' : 'Out of guesses'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -211,7 +335,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                     children: [
                       const TextSpan(text: 'The word was '),
                       TextSpan(
-                        text: _game.answer.toUpperCase(),
+                        text: _game!.answer.toUpperCase(),
                         style: const TextStyle(
                             color: Colors.white, fontWeight: FontWeight.bold),
                       ),
@@ -219,32 +343,29 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                   ),
                 ),
               ),
-            _StatsView(stats: _stats),
+            daily ? _DailyStatsView(stats: _daily) : _StatsView(stats: _stats),
           ],
         ),
         actions: [
           TextButton.icon(
             onPressed: () {
-              final header =
-                  'Wordplay ${didWin ? _game.guesses.length : "X"}/6'
-                  '${_hardMode ? "*" : ""}';
-              Clipboard.setData(
-                  ClipboardData(text: '$header\n\n${_game.shareGrid()}'));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text('Copied results to clipboard'),
-                behavior: SnackBarBehavior.floating,
-              ));
+              Clipboard.setData(ClipboardData(text: _shareText(didWin)));
+              _toast('Copied to clipboard');
             },
-            icon: const Icon(Icons.share),
-            label: const Text('Share'),
+            icon: const Icon(Icons.copy),
+            label: const Text('Copy result'),
           ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _newGame();
-            },
-            child: const Text('New game'),
-          ),
+          if (daily)
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('Done'))
+          else
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _newUnlimited();
+              },
+              child: const Text('New game'),
+            ),
         ],
       ),
     );
@@ -254,16 +375,22 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1F),
+        backgroundColor: _panel,
         title: const Text('Statistics'),
-        content: _StatsView(stats: _stats),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _StatsView(stats: _stats),
+            const SizedBox(height: 18),
+            const Divider(color: Colors.white12),
+            const SizedBox(height: 6),
+            _DailyStatsView(stats: _daily),
+          ],
+        ),
         actions: [
           TextButton(
-            onPressed: () async {
-              await _stats.reset();
-              if (mounted) setState(() {});
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
+            onPressed: () => _confirmReset(ctx),
             child: const Text('Reset', style: TextStyle(color: Colors.white38)),
           ),
           FilledButton(
@@ -273,18 +400,45 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     );
   }
 
+  void _confirmReset(BuildContext statsCtx) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: const Text('Reset stats?'),
+        content: const Text(
+            'This clears your games, streaks and guess distribution. '
+            "It can't be undone."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () async {
+              await _stats.reset();
+              if (mounted) setState(() {});
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (statsCtx.mounted) Navigator.pop(statsCtx);
+            },
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showHelp() {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1F),
+        backgroundColor: _panel,
         title: const Text('How to play'),
         content: const Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Guess the word in 6 tries. Each guess must be a valid '
-                '5-letter word.'),
+            Text('Guess the hidden word in 6 tries. Your guess has to be a '
+                'real word of the right length.'),
             SizedBox(height: 12),
             _LegendRow(color: _green, text: 'Right letter, right spot'),
             SizedBox(height: 6),
@@ -292,16 +446,14 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
             SizedBox(height: 6),
             _LegendRow(color: _gray, text: 'Not in the word'),
             SizedBox(height: 12),
-            Text('Unlimited mode: play as many words as you like. Hard mode '
-                'forces you to reuse every hint you uncover.',
+            Text('Unlimited: play forever, pick 4, 5 or 6 letters. Daily: one '
+                'shared puzzle a day. Hard mode makes you reuse every hint.',
                 style: TextStyle(color: Colors.white70)),
             SizedBox(height: 16),
             Center(
               child: Text('Wordplay by Spacechase',
                   style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white38,
-                      letterSpacing: 0.5)),
+                      fontSize: 12, color: Colors.white38, letterSpacing: 0.5)),
             ),
           ],
         ),
@@ -333,7 +485,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
           children: [
             Text('WORDPLAY',
                 style: TextStyle(
-                    fontWeight: FontWeight.w800, letterSpacing: 4, height: 1.0)),
+                    fontWeight: FontWeight.w800, letterSpacing: 4, height: 1)),
             Text('by Spacechase',
                 style: TextStyle(
                     fontSize: 10,
@@ -342,8 +494,8 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                     fontWeight: FontWeight.w500)),
           ],
         ),
-        shape: const Border(
-            bottom: BorderSide(color: Color(0xFF2A2A2B), width: 1)),
+        shape:
+            const Border(bottom: BorderSide(color: Color(0xFF2A2A2B), width: 1)),
         actions: [
           IconButton(
               onPressed: _showHelp, icon: const Icon(Icons.help_outline)),
@@ -354,7 +506,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
             Switch(
               value: _hardMode,
               onChanged: (v) {
-                if (_game.guesses.isNotEmpty) {
+                if ((_game?.guesses.isNotEmpty ?? false)) {
                   _reject('Hard mode locks once you guess');
                   return;
                 }
@@ -363,128 +515,236 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
               },
             ),
           ]),
-          IconButton(
-              tooltip: 'New game',
-              onPressed: _newGame,
-              icon: const Icon(Icons.refresh)),
+          if (_mode == GameMode.unlimited)
+            IconButton(
+                tooltip: 'New word',
+                onPressed: _newUnlimited,
+                icon: const Icon(Icons.refresh)),
           const SizedBox(width: 4),
         ],
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(child: Center(child: _buildGrid())),
-            _Keyboard(statuses: _game.keyboardStatuses(), onKey: _onKey),
-            const SizedBox(height: 8),
-          ],
-        ),
+        child: (_loading || _game == null)
+            ? const Center(child: CircularProgressIndicator(color: _green))
+            : Column(
+                children: [
+                  _buildTopBar(),
+                  Expanded(child: Center(child: _buildGrid())),
+                  if (_game!.isOver) _buildEndBar(),
+                  _Keyboard(
+                      statuses: _game!.keyboardStatuses(), onKey: _onKey),
+                  const SizedBox(height: 8),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        spacing: 8,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          _Segment(
+            options: const ['Unlimited', 'Daily'],
+            selected: _mode == GameMode.daily ? 1 : 0,
+            onSelect: (i) =>
+                _setMode(i == 1 ? GameMode.daily : GameMode.unlimited),
+          ),
+          if (_mode == GameMode.unlimited)
+            _Segment(
+              options: [for (final n in Dictionary.supportedLengths) '$n'],
+              selected: Dictionary.supportedLengths.indexOf(_length),
+              onSelect: (i) => _setLength(Dictionary.supportedLengths[i]),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEndBar() {
+    final game = _game!;
+    final won = game.isWon;
+    final daily = _mode == GameMode.daily;
+    final List<InlineSpan> spans = won
+        ? [
+            TextSpan(
+                text: 'Solved in ${game.guesses.length}/6 ',
+                style: const TextStyle(color: Colors.white)),
+            const TextSpan(text: '🎉'),
+          ]
+        : [
+            const TextSpan(text: 'Answer: '),
+            TextSpan(
+              text: game.answer.toUpperCase(),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1),
+            ),
+          ];
+    if (daily) {
+      spans.add(TextSpan(
+          text: '   ·   streak ${_daily.streak}',
+          style: const TextStyle(color: Colors.white38, fontSize: 13)));
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+          color: _panel, borderRadius: BorderRadius.circular(8)),
+      child: Row(
+        children: [
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                  style: const TextStyle(color: Colors.white70, fontSize: 15),
+                  children: spans),
+            ),
+          ),
+          if (daily)
+            OutlinedButton(
+                onPressed: () => _setMode(GameMode.unlimited),
+                child: const Text('Play unlimited'))
+          else
+            FilledButton(
+                onPressed: _newUnlimited, child: const Text('New game')),
+        ],
       ),
     );
   }
 
   Widget _buildGrid() {
-    return AnimatedBuilder(
-      animation: _shake,
-      builder: (context, child) {
-        final dx = _shakeOffset(_shake.value);
-        return Transform.translate(offset: Offset(dx, 0), child: child);
-      },
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: List.generate(_game.maxGuesses, (row) => _buildRow(row)),
-      ),
-    );
+    final game = _game!;
+    final len = game.wordLength;
+    return LayoutBuilder(builder: (context, c) {
+      final byWidth = c.maxWidth * 0.92 / len - 6;
+      final byHeight = c.maxHeight / game.maxGuesses - 6;
+      final tile = math.min(byWidth, byHeight).clamp(28.0, 62.0).toDouble();
+      return AnimatedBuilder(
+        animation: _shake,
+        builder: (context, child) =>
+            Transform.translate(offset: Offset(_shakeOffset(_shake.value), 0),
+                child: child),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children:
+              List.generate(game.maxGuesses, (row) => _buildRow(row, tile)),
+        ),
+      );
+    });
   }
 
-  // Damped horizontal wiggle for invalid guesses.
+  // damped horizontal wiggle for invalid guesses
   double _shakeOffset(double t) {
     if (t == 0 || t == 1) return 0;
     const twoPi = 6.283185307179586;
-    return 7 * (1 - t) * _signWave((t * 3 * twoPi).remainder(twoPi));
+    final v = (t * 3 * twoPi).remainder(twoPi);
+    return 7 * (1 - t) * (v < 3.14159 ? 1 : -1);
   }
 
-  double _signWave(double v) {
-    const pi = 3.141592653589793;
-    return v < pi ? 1 : -1;
-  }
-
-  Widget _buildRow(int row) {
-    final isSubmitted = row < _game.guesses.length;
-    final isCurrent = row == _game.guesses.length && !_game.isOver;
+  Widget _buildRow(int row, double tile) {
+    final game = _game!;
+    final isSubmitted = row < game.guesses.length;
+    final isCurrent = row == game.guesses.length && !game.isOver;
     final word =
-        isSubmitted ? _game.guesses[row] : (isCurrent ? _game.current : '');
+        isSubmitted ? game.guesses[row] : (isCurrent ? game.current : '');
     final statuses =
-        isSubmitted ? WordleGame.evaluate(word, _game.answer) : null;
-    final animate = row == _justSubmittedRow;
+        isSubmitted ? WordleGame.evaluate(word, game.answer) : null;
+    final flip = row == _justSubmittedRow;
+    final bounce = row == _winRow;
 
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: List.generate(_game.wordLength, (col) {
+      children: List.generate(game.wordLength, (col) {
         final letter = col < word.length ? word[col] : '';
         final status = statuses != null ? statuses[col] : LetterStatus.tbd;
         return LetterTile(
-          key: ValueKey('$row-$col-${_game.answer}'),
+          key: ValueKey('$row-$col-${game.answer}'),
           letter: letter,
           status: status,
           filled: letter.isNotEmpty,
-          animate: animate,
-          delayMs: animate ? col * _staggerMs : 0,
+          size: tile,
+          flip: flip,
+          bounce: bounce,
+          delayMs: flip ? col * _staggerMs : (bounce ? col * 90 : 0),
         );
       }),
     );
   }
 }
 
-// One tile, with the flip-to-reveal animation.
+// One tile: flips to reveal its colour, and bounces on a win.
 class LetterTile extends StatefulWidget {
   const LetterTile({
     super.key,
     required this.letter,
     required this.status,
     required this.filled,
-    this.animate = false,
+    required this.size,
+    this.flip = false,
+    this.bounce = false,
     this.delayMs = 0,
   });
 
   final String letter;
   final LetterStatus status;
   final bool filled;
-  final bool animate;
+  final double size;
+  final bool flip;
+  final bool bounce;
   final int delayMs;
 
   @override
   State<LetterTile> createState() => _LetterTileState();
 }
 
-class _LetterTileState extends State<LetterTile>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-  bool _played = false;
+class _LetterTileState extends State<LetterTile> with TickerProviderStateMixin {
+  late final AnimationController _flipC;
+  late final AnimationController _bounceC;
+  bool _flipped = false;
+  bool _bounced = false;
 
   @override
   void initState() {
     super.initState();
-    _c = AnimationController(
+    _flipC = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 300));
-    if (widget.animate) _scheduleFlip();
+    _bounceC = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 320));
+    if (widget.flip) _scheduleFlip();
+    if (widget.bounce) _scheduleBounce();
   }
 
   @override
   void didUpdateWidget(LetterTile old) {
     super.didUpdateWidget(old);
-    if (widget.animate && !old.animate && !_played) _scheduleFlip();
+    if (widget.flip && !old.flip && !_flipped) _scheduleFlip();
+    if (widget.bounce && !old.bounce && !_bounced) _scheduleBounce();
   }
 
   void _scheduleFlip() {
-    _played = true;
+    _flipped = true;
     Future<void>.delayed(Duration(milliseconds: widget.delayMs), () {
-      if (mounted) _c.forward(from: 0);
+      if (mounted) _flipC.forward(from: 0);
+    });
+  }
+
+  void _scheduleBounce() {
+    _bounced = true;
+    Future<void>.delayed(Duration(milliseconds: widget.delayMs), () {
+      if (mounted) _bounceC.forward(from: 0);
     });
   }
 
   @override
   void dispose() {
-    _c.dispose();
+    _flipC.dispose();
+    _bounceC.dispose();
     super.dispose();
   }
 
@@ -495,18 +755,21 @@ class _LetterTileState extends State<LetterTile>
         widget.status == LetterStatus.absent;
 
     return AnimatedBuilder(
-      animation: _c,
+      animation: Listenable.merge([_flipC, _bounceC]),
       builder: (context, _) {
-        final t = _c.value;
-        // swap to the coloured face at the halfway point of the flip
-        final showColored = !widget.animate || t >= 0.5;
+        final t = _flipC.value;
+        final showColored = !widget.flip || t >= 0.5;
         final angle = (t < 0.5 ? t : 1 - t) * 3.14159;
+        final dy = -widget.size * 0.22 * math.sin(3.14159 * _bounceC.value);
         final face =
             showColored && revealed ? _coloredFace() : _typingFace();
-        return Transform(
-          alignment: Alignment.center,
-          transform: Matrix4.identity()..rotateX(angle),
-          child: face,
+        return Transform.translate(
+          offset: Offset(0, dy),
+          child: Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.identity()..rotateX(angle),
+            child: face,
+          ),
         );
       },
     );
@@ -515,31 +778,71 @@ class _LetterTileState extends State<LetterTile>
   Widget _box({required Widget child, Color? bg, Border? border}) {
     return Container(
       margin: const EdgeInsets.all(3),
-      width: 58,
-      height: 58,
+      width: widget.size,
+      height: widget.size,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: bg, border: border),
       child: child,
     );
   }
 
-  Widget _typingFace() {
-    return _box(
-      border: Border.all(
-          color: widget.filled ? _tbdBorder : _emptyBorder, width: 2),
-      child: _text(Colors.white),
-    );
-  }
+  Widget _typingFace() => _box(
+        border: Border.all(
+            color: widget.filled ? _tbdBorder : _emptyBorder, width: 2),
+        child: _text(),
+      );
 
-  Widget _coloredFace() {
-    return _box(bg: _colorFor(widget.status), child: _text(Colors.white));
-  }
+  Widget _coloredFace() =>
+      _box(bg: _colorFor(widget.status), child: _text());
 
-  Widget _text(Color color) => Text(
+  Widget _text() => Text(
         widget.letter.toUpperCase(),
         style: TextStyle(
-            color: color, fontSize: 30, fontWeight: FontWeight.bold),
+            color: Colors.white,
+            fontSize: widget.size * 0.5,
+            fontWeight: FontWeight.bold),
       );
+}
+
+// Small pill-style segmented control used for mode and word length.
+class _Segment extends StatelessWidget {
+  const _Segment(
+      {required this.options, required this.selected, required this.onSelect});
+
+  final List<String> options;
+  final int selected;
+  final void Function(int) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+          color: _panel, borderRadius: BorderRadius.circular(20)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < options.length; i++)
+            GestureDetector(
+              onTap: () => onSelect(i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                    color: i == selected ? _green : Colors.transparent,
+                    borderRadius: BorderRadius.circular(18)),
+                child: Text(options[i],
+                    style: TextStyle(
+                        color: i == selected ? Colors.white : Colors.white60,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _Keyboard extends StatelessWidget {
@@ -623,10 +926,10 @@ class _StatsView extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            _stat('${stats.played}', 'Played'),
-            _stat('${stats.winPercent}', 'Win %'),
-            _stat('${stats.currentStreak}', 'Streak'),
-            _stat('${stats.maxStreak}', 'Max'),
+            _Stat('${stats.played}', 'Played'),
+            _Stat('${stats.winPercent}', 'Win %'),
+            _Stat('${stats.currentStreak}', 'Streak'),
+            _Stat('${stats.maxStreak}', 'Max'),
           ],
         ),
         const SizedBox(height: 16),
@@ -668,12 +971,45 @@ class _StatsView extends StatelessWidget {
       ],
     );
   }
+}
 
-  Widget _stat(String value, String label) => Column(
+class _DailyStatsView extends StatelessWidget {
+  const _DailyStatsView({required this.stats});
+  final DailyStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Daily', style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _Stat('${stats.played}', 'Played'),
+            _Stat('${stats.winPercent}', 'Win %'),
+            _Stat('${stats.streak}', 'Streak'),
+            _Stat('${stats.maxStreak}', 'Max'),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  const _Stat(this.value, this.label);
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Column(
         children: [
           Text(value,
-              style: const TextStyle(
-                  fontSize: 26, fontWeight: FontWeight.bold)),
+              style:
+                  const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
           Text(label,
               style: const TextStyle(fontSize: 12, color: Colors.white70)),
         ],
