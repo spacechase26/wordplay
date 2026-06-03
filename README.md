@@ -1,17 +1,31 @@
-# wordplay
+# Wordplay
 
-A new Flutter project.
+A Wordle-style word game, but unlimited — no daily limit, no paywall. Built with Flutter, runs on web and Android.
 
-## Getting Started
+Play it: https://spacechase26.github.io/wordplay/
 
-This project is a starting point for a Flutter application.
+## Features
 
-A few resources to get you started if this is your first Flutter project:
+- Classic 5-letter / 6-guess game with the flip reveal
+- Unlimited play, new word whenever you want
+- Hard mode (have to reuse the hints you've found)
+- Stats + streaks saved on your device
+- Share your result grid
+- Works with the on-screen keyboard or a real one
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## Running it
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```
+flutter pub get
+flutter run -d chrome      # or any connected device
+```
+
+Build for web:
+
+```
+flutter build web --release --base-href "/wordplay/"
+```
+
+The game logic lives in `lib/game_logic.dart` and is covered by `test/`.
+
+— Spacechase

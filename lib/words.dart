@@ -1,5 +1,5 @@
-// Auto-generated Wordle word lists.
-// answers: solution pool (2315). validGuesses: all accepted guesses (12972).
+// Word lists. kAnswers is the pool of solutions; kValidGuesses is kept
+// around in case a strict "real words only" mode comes back later.
 
 const List<String> kAnswers = <String>[
   'aback','abase','abate','abbey','abbot','abhor','abide','abled','abode','abort','about','above',

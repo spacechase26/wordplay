@@ -6,7 +6,7 @@ import 'stats.dart';
 
 void main() => runApp(const WordplayApp());
 
-// Palette (NYT-style dark theme).
+// colours
 const _bg = Color(0xFF121213);
 const _green = Color(0xFF6AAA64);
 const _yellow = Color(0xFFC9B458);
@@ -89,9 +89,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  // ---- Input handling -------------------------------------------------------
-
-  // Route physical keyboard events to the same handler as on-screen taps.
+  // physical keyboard -> same handler as the on-screen keys
   KeyEventResult _onPhysicalKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -117,8 +115,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 
   void _onKey(String key) {
-    // On-screen taps move focus to the button; pull it back so the
-    // hardware keyboard keeps working afterwards.
+    // taps steal focus from the grid, grab it back
     if (!_kbFocus.hasFocus) _kbFocus.requestFocus();
     if (_busy || _game.isOver) return;
     if (key == 'ENTER') {
@@ -194,8 +191,6 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     });
     _kbFocus.requestFocus();
   }
-
-  // ---- Dialogs --------------------------------------------------------------
 
   void _showEndDialog(bool didWin) {
     showDialog<void>(
@@ -318,8 +313,6 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     );
   }
 
-  // ---- Build ----------------------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
     return Focus(
@@ -361,7 +354,6 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
             Switch(
               value: _hardMode,
               onChanged: (v) {
-                // Hard mode can only change before guesses are made.
                 if (_game.guesses.isNotEmpty) {
                   _reject('Hard mode locks once you guess');
                   return;
@@ -443,7 +435,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 }
 
-/// A single letter tile with a flip-reveal animation.
+// One tile, with the flip-to-reveal animation.
 class LetterTile extends StatefulWidget {
   const LetterTile({
     super.key,
@@ -506,9 +498,9 @@ class _LetterTileState extends State<LetterTile>
       animation: _c,
       builder: (context, _) {
         final t = _c.value;
-        // First half shows the "before" face, second half the colored face.
+        // swap to the coloured face at the halfway point of the flip
         final showColored = !widget.animate || t >= 0.5;
-        final angle = (t < 0.5 ? t : 1 - t) * 3.14159; // 0..pi/2..0
+        final angle = (t < 0.5 ? t : 1 - t) * 3.14159;
         final face =
             showColored && revealed ? _coloredFace() : _typingFace();
         return Transform(
@@ -549,8 +541,6 @@ class _LetterTileState extends State<LetterTile>
             color: color, fontSize: 30, fontWeight: FontWeight.bold),
       );
 }
-
-// ---- Keyboard ---------------------------------------------------------------
 
 class _Keyboard extends StatelessWidget {
   const _Keyboard({required this.statuses, required this.onKey});
@@ -618,8 +608,6 @@ class _Keyboard extends StatelessWidget {
     );
   }
 }
-
-// ---- Stats view -------------------------------------------------------------
 
 class _StatsView extends StatelessWidget {
   const _StatsView({required this.stats});

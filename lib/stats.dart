@@ -1,6 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Player statistics, persisted on-device via SharedPreferences.
 class Stats {
   Stats({
     this.played = 0,
@@ -15,7 +14,7 @@ class Stats {
   int currentStreak;
   int maxStreak;
 
-  /// distribution[i] = games won in (i+1) guesses.
+  // distribution[i] = wins in (i+1) guesses
   final List<int> distribution;
 
   int get winPercent => played == 0 ? 0 : ((won / played) * 100).round();
@@ -48,7 +47,6 @@ class Stats {
         _kDist, distribution.map((e) => e.toString()).toList());
   }
 
-  /// Record a finished game. [guessCount] is 1-based; null/0 means a loss.
   Future<void> record({required bool didWin, int guessCount = 0}) async {
     played++;
     if (didWin) {
@@ -74,7 +72,6 @@ class Stats {
   }
 }
 
-/// Persisted user settings.
 class Settings {
   static const _kHardMode = 'hardMode';
 
