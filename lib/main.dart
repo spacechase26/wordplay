@@ -629,30 +629,43 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        centerTitle: true,
-        title: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('WORDPLAY',
-                style: TextStyle(
-                    fontWeight: FontWeight.w800, letterSpacing: 5, height: 1)),
-            Text('by Spacechase',
-                style: TextStyle(
-                    fontSize: 10,
-                    letterSpacing: 1.5,
-                    color: _skin(context).muted,
-                    fontWeight: FontWeight.w500)),
-          ],
+        centerTitle: false,
+        titleSpacing: 14,
+        // Left-aligned + scale-down so the wordmark always fits, never
+        // truncates to "WORDPL…" on narrow phones.
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('WORDPLAY',
+                  style: TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 3,
+                      height: 1)),
+              Text('by Spacechase',
+                  style: TextStyle(
+                      fontSize: 9.5,
+                      letterSpacing: 1.5,
+                      color: _skin(context).muted,
+                      fontWeight: FontWeight.w500)),
+            ],
+          ),
         ),
         shape: Divider.createBorderSide(context, width: 1).let(
             (s) => Border(bottom: s)),
         actions: [
           IconButton(
               tooltip: 'Statistics',
+              visualDensity: VisualDensity.compact,
               onPressed: _showStats,
               icon: const Icon(Icons.leaderboard_outlined)),
           IconButton(
             tooltip: _hardMode ? 'Hard mode: on' : 'Hard mode: off',
+            visualDensity: VisualDensity.compact,
             onPressed: _toggleHard,
             icon: Icon(
               _hardMode
@@ -664,6 +677,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
           if (_mode == GameMode.unlimited)
             IconButton(
                 tooltip: 'New word',
+                visualDensity: VisualDensity.compact,
                 onPressed: _newUnlimited,
                 icon: const Icon(Icons.refresh)),
           PopupMenuButton<String>(

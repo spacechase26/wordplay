@@ -41,6 +41,15 @@ void main() {
     }
   }
 
+  testWidgets('header wordmark is not truncated on a narrow phone',
+      (tester) async {
+    await bootAt(tester, const Size(320, 640), 'dark');
+    // FittedBox lays the title out at its full intrinsic width; if it were
+    // being clamped/ellipsized in the app bar this would be a thin sliver.
+    final width = tester.getSize(find.text('WORDPLAY')).width;
+    expect(width, greaterThan(100));
+  });
+
   testWidgets('renders in daily mode', (tester) async {
     SharedPreferences.setMockInitialValues(
         {'mode': 'daily', 'seenIntro': true});
