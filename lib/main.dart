@@ -177,6 +177,10 @@ class _WordplayAppState extends State<WordplayApp> {
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
       themeMode: _mode,
+      // Honour the system font scale up to a sane bound so very large
+      // accessibility scales can't overflow the fixed-size board/keyboard.
+      builder: (context, child) => MediaQuery.withClampedTextScaling(
+          minScaleFactor: 1.0, maxScaleFactor: 1.3, child: child!),
       home: GamePage(onToggleTheme: _toggleTheme),
     );
   }
@@ -207,6 +211,8 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
 
   int _justSubmittedRow = -1;
   int _winRow = -1;
+  int _gameDay = -1; // day the current daily board belongs to (pinned)
+  int _gameSeq = 0; // bumped each new game, keys tiles to fresh state
   late final AnimationController _shake;
   final FocusNode _kbFocus = FocusNode();
 
@@ -254,15 +260,18 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 
   Future<void> _startFromStorage() async {
+    final today = _today;
     if (_mode == GameMode.daily) {
       _dict = await Dictionary.forLength(5);
       final snap = await GameStore.loadDaily();
-      if (snap != null && snap.day == _today) {
+      if (snap != null && snap.day == today) {
+        _gameDay = snap.day;
         _game = _make(snap.answer, snap.guesses);
       } else {
-        final answer = _dict!.answerForIndex(_today);
+        _gameDay = today;
+        final answer = _dict!.answerForIndex(today);
         _game = _make(answer);
-        await GameStore.saveDaily(_today, answer, const []);
+        await GameStore.saveDaily(today, answer, const []);
       }
     } else {
       _dict = await Dictionary.forLength(_length);
@@ -277,6 +286,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     }
     _justSubmittedRow = -1;
     _winRow = -1;
+    _gameSeq++;
     _busy = false;
   }
 
@@ -284,7 +294,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     final g = _game;
     if (g == null) return;
     if (_mode == GameMode.daily) {
-      GameStore.saveDaily(_today, g.answer, g.guesses);
+      GameStore.saveDaily(_gameDay, g.answer, g.guesses);
     } else {
       GameStore.saveUnlimited(g.answer, g.guesses);
     }
@@ -375,6 +385,10 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       _reject(err);
       return;
     }
+    // Pin the mode/day to THIS game so a switch mid-animation can't redirect
+    // the result to the wrong bucket.
+    final wasDaily = _mode == GameMode.daily;
+    final day = _gameDay;
     _persist();
 
     setState(() {
@@ -384,18 +398,20 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
 
     final total = _staggerMs * (game.wordLength - 1) + _flipMs + 80;
     await Future<void>.delayed(Duration(milliseconds: total));
-    if (!mounted) return;
+    // Bail out if the board was replaced (new game / mode / length switch)
+    // while we were animating — otherwise we'd record a stale result.
+    if (!mounted || !identical(_game, game)) return;
     setState(() => _busy = false);
 
     if (game.isOver) {
       final didWin = game.isWon;
-      if (_mode == GameMode.daily) {
-        await _daily.record(day: _today, didWin: didWin);
+      if (wasDaily) {
+        await _daily.record(day: day, didWin: didWin);
       } else {
         await _stats.record(
             didWin: didWin, guessCount: didWin ? game.guesses.length : 0);
       }
-      if (!mounted) return;
+      if (!mounted || !identical(_game, game)) return;
       if (didWin) {
         setState(() => _winRow = rowIndex);
         _toast(_praise(game.guesses.length), good: true);
@@ -403,7 +419,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         setState(() {});
       }
       await Future<void>.delayed(const Duration(milliseconds: 900));
-      if (mounted) _showEndDialog(didWin);
+      if (mounted && identical(_game, game)) _showEndDialog(didWin);
     }
   }
 
@@ -418,6 +434,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       'Solved';
 
   Future<void> _newUnlimited() async {
+    if (_busy) return;
     _dict = await Dictionary.forLength(_length);
     final answer = _dict!.randomAnswer(_rng);
     setState(() {
@@ -431,7 +448,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 
   Future<void> _setMode(GameMode m) async {
-    if (m == _mode) return;
+    if (_busy || m == _mode) return;
     await Settings.setMode(m == GameMode.daily ? 'daily' : 'unlimited');
     setState(() {
       _mode = m;
@@ -443,7 +460,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 
   Future<void> _setLength(int n) async {
-    if (n == _length) return;
+    if (_busy || n == _length) return;
     await Settings.setLength(n);
     setState(() => _length = n);
     await _newUnlimited();
@@ -626,19 +643,22 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
 
   Widget _buildScaffold(BuildContext context) {
     final onSurface = Theme.of(context).colorScheme.onSurface;
+    // Centre the wordmark on wide screens (desktop/tablet); left-align on
+    // narrow phones where it would otherwise crowd the action icons.
+    final wide = MediaQuery.sizeOf(context).width >= 600;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        centerTitle: false,
+        centerTitle: wide,
         titleSpacing: 14,
-        // Left-aligned + scale-down so the wordmark always fits, never
-        // truncates to "WORDPL…" on narrow phones.
+        // FittedBox scale-down so the wordmark always fits, never truncates.
         title: FittedBox(
           fit: BoxFit.scaleDown,
-          alignment: Alignment.centerLeft,
+          alignment: wide ? Alignment.center : Alignment.centerLeft,
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment:
+                wide ? CrossAxisAlignment.center : CrossAxisAlignment.start,
             children: [
               const Text('WORDPLAY',
                   style: TextStyle(
@@ -727,16 +747,23 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
             constraints: const BoxConstraints(maxWidth: 500),
             child: (_loading || _game == null)
                 ? const _Loader()
-                : Column(
-                    children: [
-                      _buildTopBar(),
-                      Expanded(child: Center(child: _buildGrid())),
-                      if (_game!.isOver) _buildEndBar(),
-                      _Keyboard(
-                          statuses: _game!.keyboardStatuses(), onKey: _onKey),
-                      const SizedBox(height: 10),
-                    ],
-                  ),
+                : LayoutBuilder(builder: (context, c) {
+                    // Shrink the keyboard on short (e.g. landscape) viewports
+                    // so the grid + keyboard never overflow vertically.
+                    final keyHeight = (c.maxHeight * 0.082).clamp(38.0, 56.0);
+                    return Column(
+                      children: [
+                        _buildTopBar(),
+                        Expanded(child: Center(child: _buildGrid())),
+                        if (_game!.isOver) _buildEndBar(),
+                        _Keyboard(
+                            statuses: _game!.keyboardStatuses(),
+                            onKey: _onKey,
+                            keyHeight: keyHeight),
+                        const SizedBox(height: 8),
+                      ],
+                    );
+                  }),
           ),
         ),
       ),
@@ -751,6 +778,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 
   void _toggleHard() {
+    if (_busy) return;
     if (_game?.guesses.isNotEmpty ?? false) {
       _reject('Hard mode locks once you guess');
       return;
@@ -845,7 +873,9 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     return LayoutBuilder(builder: (context, c) {
       final byWidth = c.maxWidth * 0.94 / len - 6;
       final byHeight = c.maxHeight / game.maxGuesses - 6;
-      final tile = math.min(byWidth, byHeight).clamp(28.0, 64.0).toDouble();
+      // Low floor so the grid can shrink to fit short viewports; min() keeps
+      // it within the box height, so it never forces an overflow.
+      final tile = math.min(byWidth, byHeight).clamp(14.0, 64.0).toDouble();
       return AnimatedBuilder(
         animation: _shake,
         builder: (context, child) => Transform.translate(
@@ -872,8 +902,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     final isCurrent = row == game.guesses.length && !game.isOver;
     final word =
         isSubmitted ? game.guesses[row] : (isCurrent ? game.current : '');
-    final statuses =
-        isSubmitted ? WordleGame.evaluate(word, game.answer) : null;
+    final statuses = isSubmitted ? game.evaluationAt(row) : null;
     final flip = row == _justSubmittedRow;
     final bounce = row == _winRow;
 
@@ -883,7 +912,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         final letter = col < word.length ? word[col] : '';
         final status = statuses != null ? statuses[col] : LetterStatus.tbd;
         return LetterTile(
-          key: ValueKey('$row-$col-${game.answer}'),
+          key: ValueKey('$_gameSeq-$row-$col'),
           letter: letter,
           status: status,
           filled: letter.isNotEmpty,
@@ -930,6 +959,7 @@ class _LetterTileState extends State<LetterTile> with TickerProviderStateMixin {
   late final AnimationController _flipC;
   late final AnimationController _bounceC;
   late final AnimationController _popC;
+  late final Listenable _anim;
   bool _flipped = false;
   bool _bounced = false;
 
@@ -942,6 +972,7 @@ class _LetterTileState extends State<LetterTile> with TickerProviderStateMixin {
         vsync: this, duration: const Duration(milliseconds: 320));
     _popC = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 110));
+    _anim = Listenable.merge([_flipC, _bounceC, _popC]);
     if (widget.flip) _scheduleFlip();
     if (widget.bounce) _scheduleBounce();
   }
@@ -985,7 +1016,7 @@ class _LetterTileState extends State<LetterTile> with TickerProviderStateMixin {
         widget.status == LetterStatus.absent;
 
     return AnimatedBuilder(
-      animation: Listenable.merge([_flipC, _bounceC, _popC]),
+      animation: _anim,
       builder: (context, _) {
         final t = _flipC.value;
         final showColored = !widget.flip || t >= 0.5;
@@ -1128,10 +1159,12 @@ class _Segment extends StatelessWidget {
 }
 
 class _Keyboard extends StatelessWidget {
-  const _Keyboard({required this.statuses, required this.onKey});
+  const _Keyboard(
+      {required this.statuses, required this.onKey, this.keyHeight = 56});
 
   final Map<String, LetterStatus> statuses;
   final void Function(String) onKey;
+  final double keyHeight;
 
   static const _rows = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
 
@@ -1171,7 +1204,7 @@ class _Keyboard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2.5),
         child: SizedBox(
-          height: 56,
+          height: keyHeight,
           child: Material(
             color: bg,
             borderRadius: BorderRadius.circular(7),

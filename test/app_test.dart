@@ -30,6 +30,7 @@ void main() {
   final sizes = {
     'narrow phone': const Size(320, 640),
     'phone': const Size(390, 844),
+    'landscape phone': const Size(844, 390),
     'tablet/desktop': const Size(1280, 900),
   };
 
