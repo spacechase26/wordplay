@@ -2,12 +2,16 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'game_logic.dart';
 import 'stats.dart';
 import 'words.dart';
 
 void main() => runApp(const WordplayApp());
+
+// Where the "Support me" menu item points.
+const _kSupportUrl = 'https://buymeacoffee.com/spacechase';
 
 const _green = Color(0xFF6AAA64);
 const _yellow = Color(0xFFC9B458);
@@ -36,33 +40,33 @@ class GameSkin extends ThemeExtension<GameSkin> {
   final Color correct, present, absent, muted, toastBg, toastText;
 
   static const dark = GameSkin(
-    panel: Color(0xFF1E1F21),
-    keyBg: Color(0xFF818384),
-    keyText: Colors.white,
-    tileEmpty: Color(0xFF3A3A3C),
-    tileFilled: Color(0xFF565758),
-    tileText: Colors.white,
+    panel: Color(0xFF24262C),
+    keyBg: Color(0xFF6E7178),
+    keyText: Color(0xFFE8E9EC),
+    tileEmpty: Color(0xFF35373D),
+    tileFilled: Color(0xFF595C63),
+    tileText: Color(0xFFE8E9EC),
     correct: _green,
     present: _yellow,
-    absent: Color(0xFF3A3A3C),
-    muted: Color(0xFF9A9BA1),
-    toastBg: Colors.white,
-    toastText: Colors.black,
+    absent: Color(0xFF3B3D43),
+    muted: Color(0xFF9A9CA3),
+    toastBg: Color(0xFFE8E9EC),
+    toastText: Color(0xFF15161A),
   );
 
   static const light = GameSkin(
-    panel: Color(0xFFF3F4F6),
-    keyBg: Color(0xFFD3D6DA),
-    keyText: Color(0xFF1A1A1B),
-    tileEmpty: Color(0xFFD3D6DA),
-    tileFilled: Color(0xFF878A8C),
-    tileText: Color(0xFF1A1A1B),
+    panel: Color(0xFFEEEFF1),
+    keyBg: Color(0xFFCBCFD4),
+    keyText: Color(0xFF26272B),
+    tileEmpty: Color(0xFFCDD0D5),
+    tileFilled: Color(0xFF9296A0),
+    tileText: Color(0xFF26272B),
     correct: _green,
     present: _yellow,
-    absent: Color(0xFF787C7E),
+    absent: Color(0xFF7C8085),
     muted: Color(0xFF6E7177),
-    toastBg: Color(0xFF1A1A1B),
-    toastText: Colors.white,
+    toastBg: Color(0xFF26272B),
+    toastText: Color(0xFFFAFAF8),
   );
 
   Color status(LetterStatus s) => switch (s) {
@@ -100,8 +104,10 @@ GameSkin _skin(BuildContext c) => Theme.of(c).extension<GameSkin>()!;
 
 ThemeData _theme(Brightness b) {
   final dark = b == Brightness.dark;
-  final bg = dark ? const Color(0xFF121213) : Colors.white;
-  final onBg = dark ? Colors.white : const Color(0xFF1A1A1B);
+  // Softened: dark lifts off pure black, light off pure white, with
+  // off-white / near-black text so neither glares.
+  final bg = dark ? const Color(0xFF18191E) : const Color(0xFFFAFAF8);
+  final onBg = dark ? const Color(0xFFE8E9EC) : const Color(0xFF26272B);
   return ThemeData(
     useMaterial3: true,
     brightness: b,
@@ -111,6 +117,7 @@ ThemeData _theme(Brightness b) {
       seedColor: _green,
       brightness: b,
       surface: bg,
+      onSurface: onBg,
       primary: _green,
       onPrimary: Colors.white,
     ),
@@ -644,6 +651,16 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
               tooltip: 'Statistics',
               onPressed: _showStats,
               icon: const Icon(Icons.leaderboard_outlined)),
+          IconButton(
+            tooltip: _hardMode ? 'Hard mode: on' : 'Hard mode: off',
+            onPressed: _toggleHard,
+            icon: Icon(
+              _hardMode
+                  ? Icons.local_fire_department
+                  : Icons.local_fire_department_outlined,
+              color: _hardMode ? _green : null,
+            ),
+          ),
           if (_mode == GameMode.unlimited)
             IconButton(
                 tooltip: 'New word',
@@ -655,16 +672,22 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
               switch (v) {
                 case 'help':
                   _showHelp();
-                case 'hard':
-                  _toggleHard();
+                case 'support':
+                  _openSupport();
                 case 'theme':
                   widget.onToggleTheme();
               }
             },
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'help', child: Text('How to play')),
-              CheckedPopupMenuItem(
-                  value: 'hard', checked: _hardMode, child: const Text('Hard mode')),
+              const PopupMenuItem(
+                value: 'support',
+                child: Row(children: [
+                  Icon(Icons.favorite_outline, size: 20, color: Colors.pink),
+                  SizedBox(width: 12),
+                  Text('Support me'),
+                ]),
+              ),
               PopupMenuItem(
                 value: 'theme',
                 child: Row(children: [
@@ -704,6 +727,13 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         ),
       ),
     );
+  }
+
+  Future<void> _openSupport() async {
+    final uri = Uri.parse(_kSupportUrl);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) _toast('Could not open link');
+    }
   }
 
   void _toggleHard() {

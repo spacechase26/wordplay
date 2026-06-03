@@ -38,6 +38,9 @@ dependencies:
   # Local persistence for stats and settings.
   shared_preferences: ^2.3.2
 
+  # Opening the "Support me" link.
+  url_launcher: ^6.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
